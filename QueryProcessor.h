@@ -8,10 +8,9 @@ class QueryProcessor {
 public:
     QueryProcessor(const InvertedIndex& index);
     void processQueries() const;
-    void processQuery(const std::string& query) const;
 
 private:
     const InvertedIndex& index;
 };
 
-#endif // QUERY_PROCESSOR_H
+#endif
