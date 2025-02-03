@@ -5,6 +5,8 @@
 #include <vector>
 #include <string>
 #include <utility>
+#include <queue>
+#include <fstream>
 
 // Posting structure for document ID and frequency
 struct Posting {
@@ -19,19 +21,37 @@ struct SearchResult {
     double tfidf;
 };
 
+// MergeNode for priority queue in multi-way merge (SPIMI)
+struct MergeNode {
+    std::wstring term;
+    int fileIndex;
+
+    bool operator>(const MergeNode &other) const {
+        return term > other.term; // Min-heap priority queue
+    }
+};
+
 class InvertedIndex {
 public:
-    // Builds the inverted index from a collection of documents
-    void buildIndex(const std::unordered_map<int, std::wstring>& documents);
+    // Builds the inverted index using SPIMI
+    void buildIndexSPIMI(const std::unordered_map<int, std::wstring>& documents, int chunkSize, const std::string& indexPath);
+
+    // Saves a partial index to disk
+    void savePartialIndex(const std::unordered_map<std::wstring, std::vector<Posting>>& partialIndex, int chunkID, const std::string& indexPath);
+
+    // Merges partial index files into a final index
+    void mergeIndexes(int numChunks, const std::string& indexPath);
 
     // Saves the index, lexicon, and metadata to files
-    void saveIndex(const std::string& indexPath) const;
+    //void saveIndex(const std::string& indexPath) const;
 
-    // Loads the index, lexicon, and metadata from files
+    // Loads the final merged index from disk
     void loadIndex(const std::string& indexPath);
 
+    static int estimateChunkSize();
+
     // Searches for documents matching the query (with optional conjunctive behavior)
-    std::vector<Posting> search(const std::wstring& query, bool conjunctive) const;
+    //std::vector<Posting> search(const std::wstring& query, bool conjunctive) const;
 
     // Searches for documents with TF-IDF scoring and returns ranked results
     std::vector<SearchResult> searchWithTFIDF(const std::wstring& query, bool conjunctive) const;
