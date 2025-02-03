@@ -346,7 +346,7 @@ std::vector<SearchResult> InvertedIndex::searchWithTFIDF(const std::wstring& que
     std::wstring word;
     std::vector<std::wstring> terms;
 
-    std::wcout << L"🔍 Received Query: " << query << std::endl;
+    //std::wcout << L"🔍 Received Query: " << query << std::endl;
 
     // Process the query words
     while (wss >> word) {
@@ -365,7 +365,7 @@ std::vector<SearchResult> InvertedIndex::searchWithTFIDF(const std::wstring& que
     bool firstTerm = true;
 
     for (const auto& term : terms) {
-        std::wcout << L"🔎 Searching for term: " << term << std::endl;
+        //std::wcout << L"🔎 Searching for term: " << term << std::endl;
         openList(term);
 
         if (currentPosting == endPosting) {
@@ -441,7 +441,7 @@ void InvertedIndex::openList(const std::wstring& term) const {
     if (it != index.end() && !it->second.empty()) {
         currentPosting = it->second.begin();
         endPosting = it->second.end();
-        std::wcout << L" Term Found: " << term << L", Postings Size: " << it->second.size() << std::endl;
+        //std::wcout << L" Term Found: " << term << L", Postings Size: " << it->second.size() << std::endl;
     } else {
         currentPosting = endPosting;
         std::wcout << L" Term Not Found in Index: " << term << std::endl;
