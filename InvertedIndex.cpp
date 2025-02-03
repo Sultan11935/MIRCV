@@ -124,8 +124,15 @@ void InvertedIndex::savePartialIndex(const std::unordered_map<std::wstring, std:
             indexFile << posting.docID << ":" << posting.frequency << " ";
         }
         indexFile << "\n";
+
+        uniqueTerms.insert(term);
     }
 
+
+    // Write the lexicon file
+    for (const auto& term : uniqueTerms) {
+        lexiconFile << converter.to_bytes(term) << "\n";
+    }
 
     // Write document lengths
     for (const auto& entry : docLengths) {
@@ -203,6 +210,8 @@ void InvertedIndex::mergeIndexes(int numChunks, const std::string& indexPath) {
 
     for (int i = 0; i < numChunks; ++i) {
         std::ifstream chunkFile(indexPath + "/index_chunk_" + std::to_string(i) + ".dat");
+        std::ifstream lexiconChunkFile(indexPath + "/lexicon_chunk_" + std::to_string(i) + ".dat");
+
         if (!chunkFile) {
             std::cerr << " WARNING: Missing index chunk file: " << indexPath + "/index_chunk_" + std::to_string(i) + ".dat" << std::endl;
             continue;
@@ -225,6 +234,16 @@ void InvertedIndex::mergeIndexes(int numChunks, const std::string& indexPath) {
             auto &existingPostings = termPostings[wterm];
             existingPostings.insert(existingPostings.end(), postings.begin(), postings.end());
         }
+
+        // Read lexicon chunks and merge into final lexicon
+        if (lexiconChunkFile) {
+            while (std::getline(lexiconChunkFile, line)) {
+                std::wstring lexiconTerm = utf8ToWstring(line);
+                uniqueTerms.insert(lexiconTerm);
+            }
+            lexiconChunkFile.close();
+        }
+
     }
 
     for (auto &[term, postings] : termPostings) {
@@ -240,6 +259,11 @@ void InvertedIndex::mergeIndexes(int numChunks, const std::string& indexPath) {
         if (uniqueTerms.insert(term).second) {
             finalLexiconFile << wstringToUtf8(term) << "\n";
         }
+    }
+
+    // FIX: Write final lexicon file
+    for (const auto& term : uniqueTerms) {
+        finalLexiconFile << wstringToUtf8(term) << "\n";
     }
 
     // Merge document lengths
@@ -362,9 +386,9 @@ std::vector<SearchResult> InvertedIndex::searchWithTFIDF(const std::wstring& que
                 docScores[docID].second += tfidf;
 
                 // Debug TF-IDF calculations
-                std::wcout << L" DocID: " << docID << L", Freq: " << freq
-                           << L", Doc Length: " << docLengthIt->second
-                           << L", TF-IDF: " << tfidf << std::endl;
+                //std::wcout << L" DocID: " << docID << L", Freq: " << freq
+                           //<< L", Doc Length: " << docLengthIt->second
+                           //<< L", TF-IDF: " << tfidf << std::endl;
             }
             freq = getFreq();
         }
