@@ -11,8 +11,6 @@
 #include <algorithm>
 #include <unordered_set>
 #include <chrono>
-#include <climits> 
-
 
 int InvertedIndex::estimateChunkSize() {
     return 1000000; // Manually set chunk size 
@@ -358,13 +356,14 @@ void InvertedIndex::loadIndex(const std::string& indexPath) {
 
 
 
+// -------------------- Optimized TF-IDF Search --------------------
 std::vector<SearchResult> InvertedIndex::searchWithTFIDF(const std::wstring& query, bool conjunctive) const {
     std::vector<SearchResult> results;
     std::wstringstream wss(query);
     std::wstring word;
     std::vector<std::wstring> terms;
 
-    // Step 1: Preprocess the query
+    // Preprocess query terms
     while (wss >> word) {
         word = preprocessWord(word);
         if (!word.empty()) {
@@ -377,80 +376,89 @@ std::vector<SearchResult> InvertedIndex::searchWithTFIDF(const std::wstring& que
         return results;
     }
 
-    // Step 2: Prepare iterators for all posting lists
-    struct Cursor {
-        std::wstring term;
-        std::vector<Posting>::const_iterator current;
-        std::vector<Posting>::const_iterator end;
-    };
-
-    std::vector<Cursor> cursors;
-    std::unordered_map<int, std::unordered_map<std::wstring, int>> docTermFreqs;
+    std::unordered_map<int, std::pair<int, double>> docScores;
+    std::vector<std::unordered_set<int>> docSets;
 
     for (const auto& term : terms) {
         auto it = index.find(term);
         if (it == index.end()) {
-            if (conjunctive) return {}; // fail fast for conjunctive
+            std::wcout << L" Term not found in index: " << term << std::endl;
+            if (conjunctive) return {};
             continue;
         }
 
-        cursors.push_back({term, it->second.begin(), it->second.end()});
+        openList(term);  // use your API
+
+        std::unordered_set<int> termDocIDs;
+        int docID;
+
+        while ((docID = next()) != -1) {
+            int freq = getFreq();  // frequency for that docID
+
+            termDocIDs.insert(docID);
+
+            if (!conjunctive) {
+                double tfidf = computeTFIDF(freq, docLengths.at(docID), index.at(term).size());
+                docScores[docID].first += freq;
+                docScores[docID].second += tfidf;
+            }
+        }
+
+        closeList();  // reset after loop
+
+        docSets.push_back(std::move(termDocIDs));
     }
 
-    if (cursors.empty()) return results;
-
-    // Step 3: DAAT merge
-    while (true) {
-        int minDocID = INT_MAX;
-        for (const auto& cur : cursors) {
-            if (cur.current != cur.end) {
-                minDocID = std::min(minDocID, cur.current->docID);
+    // If conjunctive (AND): compute scores only for intersected documents
+    if (conjunctive && !docSets.empty()) {
+        std::unordered_set<int> intersection = docSets[0];
+        for (size_t i = 1; i < docSets.size(); ++i) {
+            std::unordered_set<int> temp;
+            for (int docID : intersection) {
+                if (docSets[i].count(docID)) {
+                    temp.insert(docID);
+                }
             }
+            intersection = std::move(temp);
         }
 
-        if (minDocID == INT_MAX) break; // all lists exhausted
-
-        int matchingTerms = 0;
-        for (auto& cur : cursors) {
-            while (cur.current != cur.end && cur.current->docID < minDocID) {
-                ++cur.current;
-            }
-
-            if (cur.current != cur.end && cur.current->docID == minDocID) {
-                docTermFreqs[minDocID][cur.term] = cur.current->frequency;
-                ++cur.current;
-                ++matchingTerms;
-            }
-        }
-
-        if (!conjunctive || matchingTerms == (int)terms.size()) {
+        // Now score the intersected documents
+        for (int docID : intersection) {
             int totalFreq = 0;
             double totalTFIDF = 0.0;
 
             for (const auto& term : terms) {
                 const auto& postings = index.at(term);
-                auto docIt = docTermFreqs[minDocID].find(term);
-                if (docIt != docTermFreqs[minDocID].end()) {
-                    int freq = docIt->second;
-                    int docLen = docLengths.at(minDocID);
-                    int df = postings.size();
-                    totalFreq += freq;
-                    totalTFIDF += computeTFIDF(freq, docLen, df);
+                auto it = std::find_if(postings.begin(), postings.end(), [&](const Posting& p) {
+                    return p.docID == docID;
+                });
+
+                if (it != postings.end()) {
+                    totalFreq += it->frequency;
+                    totalTFIDF += computeTFIDF(it->frequency, docLengths.at(docID), postings.size());
                 }
             }
 
-            results.push_back({minDocID, totalFreq, totalTFIDF});
+            docScores[docID] = {totalFreq, totalTFIDF};
         }
-
-        docTermFreqs.erase(minDocID);
     }
 
-    // Step 4: Sort and return
+    // Final result formatting
+    for (const auto& [docID, score] : docScores) {
+        results.push_back({docID, score.first, score.second});
+    }
+
     std::sort(results.begin(), results.end(), [](const SearchResult& a, const SearchResult& b) {
         return a.tfidf > b.tfidf;
     });
 
+    std::wcout << L" TF-IDF Results Count: " << results.size() << std::endl;
+    if (results.empty()) {
+        std::wcout << L" No documents found matching the query!" << std::endl;
+    }
+
     if (results.size() > 20) results.resize(20);
+
     return results;
 }
 
