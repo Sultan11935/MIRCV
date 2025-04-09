@@ -105,8 +105,7 @@ void InvertedIndex::savePartialIndex(const std::unordered_map<std::wstring, std:
     std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
     std::unordered_set<std::wstring> uniqueTerms;
 
-    // Write partial index
-    // Ensure term postings are unique
+    // Write partial index with grouped docIDs and frequencies
     std::unordered_map<std::wstring, std::unordered_set<int>> termDocIDCheck;
     for (const auto& entry : partialIndex) {
         std::wstring term = entry.first;
@@ -119,15 +118,24 @@ void InvertedIndex::savePartialIndex(const std::unordered_map<std::wstring, std:
             }
         }
 
-        indexFile << converter.to_bytes(term) << " ";
+        if (uniquePostings.empty()) continue;
+
+        indexFile << converter.to_bytes(term) << " " << uniquePostings.size() << " ";
+
+        // Write docIDs
         for (const auto& posting : uniquePostings) {
-            indexFile << posting.docID << ":" << posting.frequency << " ";
+            indexFile << posting.docID << " ";
         }
+
+        // Write frequencies
+        for (const auto& posting : uniquePostings) {
+            indexFile << posting.frequency << " ";
+        }
+
         indexFile << "\n";
 
         uniqueTerms.insert(term);
     }
-
 
     // Write the lexicon file
     for (const auto& term : uniqueTerms) {
@@ -158,143 +166,112 @@ void InvertedIndex::savePartialIndex(const std::unordered_map<std::wstring, std:
 }
 
 
-void InvertedIndex::mergeIndexes(int numChunks, const std::string& indexPath) {
-    std::cout << "🔄 Merging " << numChunks << " index chunks into final index...\n";
 
-    // Open final index output files
+void InvertedIndex::mergeIndexes(int numChunks, const std::string& indexPath) {
+    std::cout << " Merging " << numChunks << " index chunks into final index...\n";
+
     std::ofstream finalIndexFile(indexPath + "/final_index.dat");
     std::ofstream finalDocLengthsFile(indexPath + "/final_doclengths.dat");
     std::ofstream finalDocIDToDocnoFile(indexPath + "/final_docid_to_docno.dat");
     std::ofstream finalLexiconFile(indexPath + "/final_lexicon.dat");
 
     if (!finalIndexFile || !finalDocLengthsFile || !finalDocIDToDocnoFile || !finalLexiconFile) {
-        std::cerr << " ERROR: Failed to open final index files for writing!" << std::endl;
+        std::cerr << "ERROR: Failed to open final index files for writing!" << std::endl;
         return;
     }
 
-    struct ChunkState {
-        std::ifstream file;
-        std::string currentTerm;
-        std::queue<std::string> postings;
-    };
-
-    std::vector<ChunkState> chunks(numChunks);
-    std::priority_queue<MergeNode, std::vector<MergeNode>, std::greater<MergeNode>> minHeap;
-
-    // Initialize chunks and read first line
-    for (int i = 0; i < numChunks; ++i) {
-        std::string chunkPath = indexPath + "/index_chunk_" + std::to_string(i) + ".dat";
-        chunks[i].file.open(chunkPath);
-        if (!chunks[i].file) {
-            std::cerr << " WARNING: Missing index chunk file: " << chunkPath << std::endl;
-            continue;
-        }
-
-        std::string line;
-        if (std::getline(chunks[i].file, line)) {
-            std::istringstream iss(line);
-            if (iss >> chunks[i].currentTerm) {
-                std::string posting;
-                while (iss >> posting) {
-                    chunks[i].postings.push(posting);
-                }
-                minHeap.push({utf8ToWstring(chunks[i].currentTerm), i});
-            }
-        }
-    }
-
-    
-    // Inside mergeIndexes function
-    std::unordered_map<std::wstring, std::vector<std::string>> termPostings;
+    std::unordered_map<std::wstring, std::vector<Posting>> termPostings;
     std::unordered_set<std::wstring> uniqueTerms;
 
+    std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
+
+    // Read and merge postings from each chunk
     for (int i = 0; i < numChunks; ++i) {
         std::ifstream chunkFile(indexPath + "/index_chunk_" + std::to_string(i) + ".dat");
-        std::ifstream lexiconChunkFile(indexPath + "/lexicon_chunk_" + std::to_string(i) + ".dat");
-
-        if (!chunkFile) {
-            std::cerr << " WARNING: Missing index chunk file: " << indexPath + "/index_chunk_" + std::to_string(i) + ".dat" << std::endl;
+        if (!chunkFile.is_open()) {
+            std::cerr << "WARNING: Could not open chunk file " << i << std::endl;
             continue;
         }
 
         std::string line;
         while (std::getline(chunkFile, line)) {
             if (line.empty()) continue;
+
             std::istringstream iss(line);
             std::string term;
-            if (!(iss >> term)) continue;
+            int numPostings;
+
+            if (!(iss >> term >> numPostings)) continue;
 
             std::wstring wterm = utf8ToWstring(term);
-            std::vector<std::string> postings;
-            std::string posting;
-            while (iss >> posting) {
-                postings.push_back(posting);
+            std::vector<int> docIDs(numPostings);
+            std::vector<int> freqs(numPostings);
+
+            for (int j = 0; j < numPostings; ++j) iss >> docIDs[j];
+            for (int j = 0; j < numPostings; ++j) iss >> freqs[j];
+
+            for (int j = 0; j < numPostings; ++j) {
+                termPostings[wterm].push_back({docIDs[j], freqs[j]});
             }
 
-            auto &existingPostings = termPostings[wterm];
-            existingPostings.insert(existingPostings.end(), postings.begin(), postings.end());
+            uniqueTerms.insert(wterm);
         }
 
-        // Read lexicon chunks and merge into final lexicon
-        if (lexiconChunkFile) {
-            while (std::getline(lexiconChunkFile, line)) {
-                std::wstring lexiconTerm = utf8ToWstring(line);
-                uniqueTerms.insert(lexiconTerm);
-            }
-            lexiconChunkFile.close();
-        }
-
+        chunkFile.close();
     }
 
-    for (auto &[term, postings] : termPostings) {
-        std::sort(postings.begin(), postings.end());
-        postings.erase(std::unique(postings.begin(), postings.end()), postings.end());
+    // Merge postings per term and write final index
+    for (const auto& [term, postingsList] : termPostings) {
+        std::unordered_map<int, int> mergedMap;
 
-        finalIndexFile << wstringToUtf8(term);
-        for (const auto &posting : postings) {
-            finalIndexFile << " " << posting;
+        // Merge: docID → aggregated frequency
+        for (const auto& posting : postingsList) {
+            mergedMap[posting.docID] += posting.frequency;
         }
+
+        // Convert to Posting list
+        std::vector<Posting> mergedPostings;
+        for (const auto& [docID, freq] : mergedMap) {
+            mergedPostings.push_back({docID, freq});
+        }
+
+        // Sort by docID
+        std::sort(mergedPostings.begin(), mergedPostings.end(), [](const Posting& a, const Posting& b) {
+            return a.docID < b.docID;
+        });
+
+        // Write to final index in grouped format
+        finalIndexFile << converter.to_bytes(term) << " " << mergedPostings.size() << " ";
+        for (const auto& p : mergedPostings) finalIndexFile << p.docID << " ";
+        for (const auto& p : mergedPostings) finalIndexFile << p.frequency << " ";
         finalIndexFile << "\n";
 
-        if (uniqueTerms.insert(term).second) {
-            finalLexiconFile << wstringToUtf8(term) << "\n";
-        }
-    }
-
-    // FIX: Write final lexicon file
-    for (const auto& term : uniqueTerms) {
-        finalLexiconFile << wstringToUtf8(term) << "\n";
+        finalLexiconFile << converter.to_bytes(term) << "\n";
     }
 
     // Merge document lengths
     for (int i = 0; i < numChunks; i++) {
         std::ifstream dlFile(indexPath + "/doclengths_chunk_" + std::to_string(i) + ".dat");
-        if (dlFile) {
-            std::string line;
-            while (std::getline(dlFile, line)) {
-                //std::cout << "Writing to final_doclengths: " << line << std::endl;
-                finalDocLengthsFile << line << "\n";
-            }
-            dlFile.close();
+        std::string line;
+        while (std::getline(dlFile, line)) {
+            finalDocLengthsFile << line << "\n";
         }
+        dlFile.close();
     }
 
-    // Merge docID to docno mapping
+    // Merge docID-to-docno mapping
     for (int i = 0; i < numChunks; i++) {
         std::ifstream didFile(indexPath + "/docid_to_docno_chunk_" + std::to_string(i) + ".dat");
-        if (didFile) {
-            std::string line;
-            while (std::getline(didFile, line)) {
-                //std::cout << "Writing to final_docid_to_docno: " << line << std::endl;
-                finalDocIDToDocnoFile << line << "\n";
-            }
-            didFile.close();
+        std::string line;
+        while (std::getline(didFile, line)) {
+            finalDocIDToDocnoFile << line << "\n";
         }
+        didFile.close();
     }
-
 
     std::cout << " Final index merge completed successfully.\n";
 }
+
 
 
 
@@ -314,27 +291,65 @@ void InvertedIndex::loadIndex(const std::string& indexPath) {
     std::string line;
     while (std::getline(indexFile, line)) {
         if (line.empty()) continue;
+
         std::istringstream iss(line);
         std::string term;
-        if (!(iss >> term)) continue;
+        int numPostings;
+
+        if (!(iss >> term >> numPostings)) continue;
 
         std::wstring wterm = utf8ToWstring(term);
-        std::vector<Posting> postings;
-        std::string postingStr;
-        while (iss >> postingStr) {
-            size_t colonPos = postingStr.find(':');
-            if (colonPos == std::string::npos) continue;
-            try {
-                int docID = std::stoi(postingStr.substr(0, colonPos));
-                int freq = std::stoi(postingStr.substr(colonPos + 1));
-                postings.push_back({docID, freq});
-            } catch (...) {
-                std::cerr << " ERROR parsing posting: " << postingStr << std::endl;
+        std::vector<int> docIDs(numPostings);
+        std::vector<int> freqs(numPostings);
+
+        // Read docIDs
+        for (int i = 0; i < numPostings; ++i) {
+            if (!(iss >> docIDs[i])) {
+                std::cerr << " ERROR reading docID for term: " << term << std::endl;
+                break;
             }
         }
-        if (!postings.empty()) index[wterm] = postings;
+
+        // Read frequencies
+        for (int i = 0; i < numPostings; ++i) {
+            if (!(iss >> freqs[i])) {
+                std::cerr << " ERROR reading frequency for term: " << term << std::endl;
+                break;
+            }
+        }
+
+        // Combine into postings
+        std::vector<Posting> postings;
+        for (int i = 0; i < numPostings; ++i) {
+            postings.push_back({docIDs[i], freqs[i]});
+        }
+
+        if (!postings.empty()) {
+            index[wterm] = postings;
+        }
     }
+
+    // Load document lengths
+    while (std::getline(docLengthsFile, line)) {
+        std::istringstream iss(line);
+        int docID, docLength;
+        if (iss >> docID >> docLength) {
+            docLengths[docID] = docLength;
+        }
+    }
+
+    // Load docID-to-docno mapping
+    while (std::getline(docIDToDocnoFile, line)) {
+        std::istringstream iss(line);
+        int docID, docno;
+        if (iss >> docID >> docno) {
+            docIDToDocno[docID] = docno;
+        }
+    }
+
+    std::cout << "Index successfully loaded from disk." << std::endl;
 }
+
 
 
 
