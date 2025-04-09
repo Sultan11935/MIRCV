@@ -87,6 +87,8 @@ private:
     // Iterators for the current postings list
     mutable std::vector<Posting>::const_iterator currentPosting;
     mutable std::vector<Posting>::const_iterator endPosting;
+    mutable int lastDocID = -1;
+    mutable int lastFreq = 0;
 
     // Preprocesses a word (lowercase and remove punctuation)
     std::wstring preprocessWord(const std::wstring& word) const;
