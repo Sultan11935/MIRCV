@@ -28,7 +28,7 @@ void InvertedIndex::buildIndexSPIMI(const std::unordered_map<int, std::wstring>&
         }
     }
 
-    chunkSize = 1000000; //  Set chunk size to 200 documents
+    chunkSize = 500; //  Set chunk size to 200 documents
 
     int chunkCounter = 0;
     std::unordered_map<std::wstring, std::vector<Posting>> partialIndex;
@@ -363,7 +363,7 @@ std::vector<SearchResult> InvertedIndex::searchWithTFIDF(const std::wstring& que
     std::wstring word;
     std::vector<std::wstring> terms;
 
-    // Preprocess query terms
+    // Step 1: Preprocess the query
     while (wss >> word) {
         word = preprocessWord(word);
         if (!word.empty()) {
@@ -372,44 +372,42 @@ std::vector<SearchResult> InvertedIndex::searchWithTFIDF(const std::wstring& que
     }
 
     if (terms.empty()) {
-        std::wcout << L" Query resulted in no valid terms after preprocessing!" << std::endl;
+        std::wcout << L"Query resulted in no valid terms after preprocessing!" << std::endl;
         return results;
     }
 
     std::unordered_map<int, std::pair<int, double>> docScores;
     std::vector<std::unordered_set<int>> docSets;
 
+    // Step 2: Iterate one term at a time
     for (const auto& term : terms) {
         auto it = index.find(term);
         if (it == index.end()) {
-            std::wcout << L" Term not found in index: " << term << std::endl;
             if (conjunctive) return {};
             continue;
         }
 
-        openList(term);  // use your API
-
+        openList(term);  //  Open the term’s posting list
         std::unordered_set<int> termDocIDs;
         int docID;
 
         while ((docID = next()) != -1) {
-            int freq = getFreq();  // frequency for that docID
+            int freq = getFreq();  // Get frequency before moving
 
             termDocIDs.insert(docID);
 
-            if (!conjunctive) {
+            if (!conjunctive && docLengths.find(docID) != docLengths.end()) {
                 double tfidf = computeTFIDF(freq, docLengths.at(docID), index.at(term).size());
                 docScores[docID].first += freq;
                 docScores[docID].second += tfidf;
             }
         }
 
-        closeList();  // reset after loop
-
+        closeList();  //  Close after use
         docSets.push_back(std::move(termDocIDs));
     }
 
-    // If conjunctive (AND): compute scores only for intersected documents
+    // Step 3: Handle conjunctive (AND) queries
     if (conjunctive && !docSets.empty()) {
         std::unordered_set<int> intersection = docSets[0];
         for (size_t i = 1; i < docSets.size(); ++i) {
@@ -422,7 +420,6 @@ std::vector<SearchResult> InvertedIndex::searchWithTFIDF(const std::wstring& que
             intersection = std::move(temp);
         }
 
-        // Now score the intersected documents
         for (int docID : intersection) {
             int totalFreq = 0;
             double totalTFIDF = 0.0;
@@ -443,28 +440,26 @@ std::vector<SearchResult> InvertedIndex::searchWithTFIDF(const std::wstring& que
         }
     }
 
-    // Final result formatting
+    // Step 4: Filter and sort results
     for (const auto& [docID, score] : docScores) {
-        results.push_back({docID, score.first, score.second});
+        if (score.first > 0 && score.second > 0.0) {
+            results.push_back({docID, score.first, score.second});
+        }
     }
 
     std::sort(results.begin(), results.end(), [](const SearchResult& a, const SearchResult& b) {
         return a.tfidf > b.tfidf;
     });
 
-    std::wcout << L" TF-IDF Results Count: " << results.size() << std::endl;
+    std::wcout << L"TF-IDF Results Count: " << results.size() << std::endl;
     if (results.empty()) {
-        std::wcout << L" No documents found matching the query!" << std::endl;
+        std::wcout << L"No documents found matching the query!" << std::endl;
     }
 
     if (results.size() > 20) results.resize(20);
 
     return results;
 }
-
-
-
-
 
 
 
@@ -475,34 +470,38 @@ void InvertedIndex::openList(const std::wstring& term) const {
     if (it != index.end() && !it->second.empty()) {
         currentPosting = it->second.begin();
         endPosting = it->second.end();
-        //std::wcout << L" Term Found: " << term << L", Postings Size: " << it->second.size() << std::endl;
     } else {
         currentPosting = endPosting;
-        std::wcout << L" Term Not Found in Index: " << term << std::endl;
     }
+
+    lastDocID = -1;
+    lastFreq = 0;
 }
+
 
 
 void InvertedIndex::closeList() const {
     currentTerm.clear();
     currentPosting = endPosting;
+    lastDocID = -1;
+    lastFreq = 0;
 }
+
 
 int InvertedIndex::next() const {
     if (currentPosting != endPosting) {
-        int docID = currentPosting->docID;
-        ++currentPosting; // Move to the next posting
-        return docID;
+        lastDocID = currentPosting->docID;
+        lastFreq = currentPosting->frequency;
+        ++currentPosting;
+        return lastDocID;
     }
-    return -1; // End of postings list
+    return -1;
 }
 
 int InvertedIndex::getFreq() const {
-    if (currentPosting != endPosting) {
-        return currentPosting->frequency;
-    }
-    return 0; // Return 0 instead of -1 for empty postings
+    return lastFreq;
 }
+
 
 std::wstring InvertedIndex::preprocessWord(const std::wstring& word) const {
     std::wstring result = word;
