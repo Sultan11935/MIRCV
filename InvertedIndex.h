@@ -94,7 +94,7 @@ private:
     std::wstring preprocessWord(const std::wstring& word) const;
 
     // Computes Term Frequency (TF) for a term in a document
-    double computeTF(int termFreq, int docLength) const;
+    double computeTF(int termFreq) const;
 
     // Computes Inverse Document Frequency (IDF) for a term
     double computeIDF(int docCount) const;
