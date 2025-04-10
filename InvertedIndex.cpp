@@ -513,14 +513,14 @@ std::wstring InvertedIndex::preprocessWord(const std::wstring& word) const {
 }
 
 
-double InvertedIndex::computeTF(int termFreq, int docLength) const {
-    return (docLength == 0) ? 0 : static_cast<double>(termFreq) / docLength;
+double InvertedIndex::computeTF(int termFreq) const {
+    return (termFreq > 0) ? (1.0 + std::log(termFreq)) : 0.0;
 }
 
 double InvertedIndex::computeIDF(int docCount) const {
-    return (docCount == 0) ? 0 : std::log(static_cast<double>(docLengths.size()) / (docCount + 1));
+    return (docCount == 0) ? 0.0 : std::log(static_cast<double>(docLengths.size()) / docCount);
 }
 
-double InvertedIndex::computeTFIDF(int termFreq, int docLength, int docCount) const {
-    return computeTF(termFreq, docLength) * computeIDF(docCount);
+double InvertedIndex::computeTFIDF(int termFreq, int /*docLength*/, int docCount) const {
+    return computeTF(termFreq) * computeIDF(docCount);
 }
